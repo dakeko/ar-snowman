@@ -6,20 +6,24 @@
 <title>スノーマンAR</title>
 <script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
 <style>
-  :root { --bg-top: #dcecf7; --bg-bottom: #f7fbfe; --ink: #17324a; --muted: #48637a; --accent: #c8102e; }
+  :root { --bg: #fff; --ink: #17324a; --muted: #48637a; --accent: #c8102e; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
-  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; color: var(--ink);
-    background: linear-gradient(var(--bg-top), var(--bg-bottom));
+  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; color: var(--ink); background: var(--bg);
     font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
 
-  model-viewer { flex: 1; min-height: 0; width: 100%; background: transparent; --poster-color: transparent; }
+  #stage { position: relative; flex: 1; min-height: 0; }
+  model-viewer { position: absolute; inset: 0; width: 100%; height: 100%; background: transparent; --poster-color: transparent; }
 
-  #ar-button { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  /* 2D画像：通常のページ要素として3Dの手前に置く（AR画面には重ならない） */
+  #poster { position: absolute; inset: 0; width: 100%; height: 100%; padding: 16px 16px 84px; object-fit: contain; background: var(--bg); filter: brightness(1.04); /* 画像の薄いグレーの背景を白に馴染ませる */ }
+
+  #action { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
     min-height: 56px; padding: 0 32px; border: 0; border-radius: 999px; white-space: nowrap; cursor: pointer;
     color: #fff; background: var(--accent); font: inherit; font-size: 18px; font-weight: 700;
     box-shadow: 0 6px 18px rgba(0,0,0,.25); }
-  #ar-button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  #action:disabled { background: #8a97a3; cursor: default; box-shadow: none; }
+  #action:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
 
   #progress { position: absolute; left: 0; right: 0; top: 0; height: 4px; background: rgba(0,0,0,.08); }
   #progress span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
@@ -27,50 +31,71 @@
   #guide { flex: none; margin: 0; padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
     min-height: 92px; text-align: center; font-size: 15px; line-height: 1.6; color: var(--muted); }
   #guide.error { color: var(--accent); font-weight: 600; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-  <model-viewer id="viewer"
-    src="assets/models/snowman_merry_christmas.glb?v=2"
-    alt="足元に金色のMerry Christmasの文字がある、動くスノーマンの3Dモデル"
-    ar
-    ar-modes="webxr scene-viewer quick-look"
-    ar-placement="floor"
-    ar-scale="auto"
-    camera-controls
-    touch-action="none"
-    autoplay
-    shadow-intensity="1"
-    exposure="1">
-    <button id="ar-button" slot="ar-button">机の上に置く</button>
-    <div id="progress" slot="progress-bar"><span></span></div>
-  </model-viewer>
+  <main id="stage">
+    <model-viewer id="viewer"
+      src="assets/models/snowman_merry_christmas.glb?v=2"
+      alt="足元に金色のMerry Christmasの文字がある、動くスノーマンの3Dモデル"
+      ar
+      ar-modes="webxr scene-viewer quick-look"
+      ar-placement="floor"
+      ar-scale="auto"
+      touch-action="none"
+      loading="eager"
+      autoplay
+      shadow-intensity="1"
+      exposure="1">
+      <span slot="ar-button"></span>
+      <span slot="progress-bar"></span>
+    </model-viewer>
+    <img id="poster" src="assets/images/snowman-poster.jpg" alt="スノーマンのイラスト写真">
+    <div id="progress"><span></span></div>
+    <button id="action" disabled>読み込み中…</button>
+  </main>
 
   <p id="guide">読み込み中です…</p>
 
 <script type="module">
 const viewer = document.getElementById('viewer');
+const poster = document.getElementById('poster');
+const action = document.getElementById('action');
 const guide = document.getElementById('guide');
-const bar = document.querySelector('#progress span');
+const progress = document.getElementById('progress');
 const GUIDE_AR = '「机の上に置く」を押して、カメラを机にゆっくり向けてください。指で動かしたり、大きさを変えたりできます。';
-const GUIDE_NO_AR = 'この端末ではARを使えないため、画面の中で表示しています。指で回して見られます。';
+const GUIDE_NO_AR = 'この端末ではARを使えません。「3Dで見る」を押すと、画面の中で動くスノーマンを見られます。';
+const GUIDE_3D = '指で回して見られます。';
+let mode = null; // 'ar' | '3d'
 
 function setGuide(text, isError) {
   guide.textContent = text;
   guide.classList.toggle('error', Boolean(isError));
 }
 
+function show3D() {
+  poster.hidden = true;
+  action.hidden = true;
+  viewer.setAttribute('camera-controls', '');
+  setGuide(GUIDE_3D);
+}
+
 viewer.addEventListener('progress', e => {
   const p = e.detail.totalProgress;
-  bar.style.width = `${p * 100}%`;
-  document.getElementById('progress').hidden = p >= 1;
+  progress.firstElementChild.style.width = `${p * 100}%`;
+  progress.hidden = p >= 1;
 });
 
 viewer.addEventListener('load', () => {
-  setGuide(viewer.canActivateAR ? GUIDE_AR : GUIDE_NO_AR);
+  mode = viewer.canActivateAR ? 'ar' : '3d';
+  action.textContent = mode === 'ar' ? '机の上に置く' : '3Dで見る';
+  action.disabled = false;
+  setGuide(mode === 'ar' ? GUIDE_AR : GUIDE_NO_AR);
 });
 
 viewer.addEventListener('error', () => {
+  action.hidden = true;
   setGuide('スノーマンを読み込めませんでした。通信状況を確認して、ページを開き直してください。', true);
 });
 
@@ -79,6 +104,13 @@ viewer.addEventListener('ar-status', e => {
     setGuide('ARを起動できませんでした。Androidの方はChrome、iPhoneの方はSafariで開いてください。', true);
   }
 });
+
+action.addEventListener('click', () => {
+  if (mode === 'ar') viewer.activateAR();
+  else show3D();
+});
+
+poster.addEventListener('error', () => { poster.hidden = true; });
 </script>
 </body>
 </html>
